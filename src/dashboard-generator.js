@@ -173,7 +173,7 @@ function generateDashboardHTML(analysis) {
             </div>
             <div class="control-group">
                 <label for="exclude-members">Exclude Members:</label>
-                <input type="text" id="exclude-members" placeholder="e.g. alice, bob@company.com" oninput="applyFilters()" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 240px;" />
+                <input type="text" id="exclude-members" placeholder="e.g. alice, bob@company.com" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 240px;" />
             </div>
             <button onclick="resetFilters()">Reset Filters</button>
         </div>
@@ -361,6 +361,12 @@ function generateDashboardHTML(analysis) {
             populateEpicWeeklySelect();
             document.getElementById('timestamp').textContent = new Date().toLocaleString();
             document.getElementById('timestamp-footer').textContent = new Date().toLocaleString();
+            document.getElementById('exclude-members').addEventListener('input', function() {
+                if (this.value.length === 0 || this.value.length % 15 === 0) applyFilters();
+            });
+            document.getElementById('exclude-members').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') applyFilters();
+            });
         }
         
         function populateFilters() {
