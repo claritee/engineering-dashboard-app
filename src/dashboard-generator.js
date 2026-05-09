@@ -384,15 +384,36 @@ function generateDashboardHTML(analysis) {
             applyFilters();
         }
         
+        function getFilteredSprints() {
+            const selected = document.getElementById('sprint-filter').value;
+            return selected ? analyticsData.bySprint.filter(s => s.name === selected) : analyticsData.bySprint;
+        }
+
+        function getFilteredTickets() {
+            const seen = new Set();
+            const tickets = [];
+            getFilteredSprints().forEach(s => s.tickets.forEach(t => {
+                if (!seen.has(t.id)) { seen.add(t.id); tickets.push(t); }
+            }));
+            return tickets;
+        }
+
         function renderCharts() {
+            const filteredSprints = getFilteredSprints();
+            const filteredTickets = getFilteredTickets();
             const typeCtx = document.getElementById('chart-story-type').getContext('2d');
             if (charts.storyType) charts.storyType.destroy();
+            const filteredByType = { feature: 0, bug: 0, chore: 0, other: 0 };
+            filteredTickets.forEach(t => {
+                if (filteredByType.hasOwnProperty(t.type)) filteredByType[t.type]++;
+                else filteredByType.other++;
+            });
             charts.storyType = new Chart(typeCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: Object.keys(analyticsData.byType),
+                    labels: Object.keys(filteredByType),
                     datasets: [{
-                        data: Object.values(analyticsData.byType),
+                        data: Object.values(filteredByType),
                         backgroundColor: ['#667eea', '#f5576c', '#ffd89b', '#00d4ff'],
                         borderColor: 'white',
                         borderWidth: 2
@@ -407,16 +428,22 @@ function generateDashboardHTML(analysis) {
             
             const epicCtx = document.getElementById('chart-epic-pie').getContext('2d');
             if (charts.epicPie) charts.epicPie.destroy();
+            const epicCompMap = {};
+            filteredTickets.forEach(t => {
+                if (!epicCompMap[t.epic]) epicCompMap[t.epic] = 0;
+                if (t.isCompleted) epicCompMap[t.epic]++;
+            });
+            const filteredEpicPie = Object.entries(epicCompMap).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+            const epicPieTotal = filteredEpicPie.reduce((s, [, v]) => s + v, 0);
             charts.epicPie = new Chart(epicCtx, {
                 type: 'pie',
                 data: {
-                    labels: analyticsData.byEpic.map(e => {
-                        const total = analyticsData.byEpic.reduce((sum, ep) => sum + ep.completed, 0);
-                        const pct = total > 0 ? ((e.completed / total) * 100).toFixed(1) : '0.0';
-                        return e.name + ' (' + pct + '%)';
+                    labels: filteredEpicPie.map(([name, v]) => {
+                        const pct = epicPieTotal > 0 ? ((v / epicPieTotal) * 100).toFixed(1) : '0.0';
+                        return name + ' (' + pct + '%)';
                     }),
                     datasets: [{
-                        data: analyticsData.byEpic.map(e => e.completed),
+                        data: filteredEpicPie.map(([, v]) => v),
                         backgroundColor: [
                             '#667eea', '#f5576c', '#ffd89b', '#00d4ff', '#ff6b6b',
                             '#4ecdc4', '#95e1d3', '#f9ca24', '#6c5ce7', '#a29bfe',
@@ -455,12 +482,12 @@ function generateDashboardHTML(analysis) {
                     'create ci/cd pipeline'
                 ]);
                 const categoryTotals = { BAU: 0, 'Tech Improvements': 0, Engineering: 0, Product: 0 };
-                analyticsData.byEpic.forEach(e => {
-                    const key = e.name.toLowerCase().trim();
-                    if (key === 'bau') categoryTotals['BAU'] += e.created;
-                    else if (key === 'tech improvements') categoryTotals['Tech Improvements'] += e.created;
-                    else if (engineeringEpics.has(key)) categoryTotals['Engineering'] += e.created;
-                    else categoryTotals['Product'] += e.created;
+                filteredTickets.forEach(t => {
+                    const key = (t.epic || '').toLowerCase().trim();
+                    if (key === 'bau') categoryTotals['BAU']++;
+                    else if (key === 'tech improvements') categoryTotals['Tech Improvements']++;
+                    else if (engineeringEpics.has(key)) categoryTotals['Engineering']++;
+                    else categoryTotals['Product']++;
                 });
                 const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
                 const labels = Object.keys(categoryTotals).map(k => {
@@ -502,8 +529,15 @@ function generateDashboardHTML(analysis) {
 
             const excludedMembers = document.getElementById('exclude-members').value
                 .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            const filteredTicketIds = new Set(filteredTickets.map(t => t.id));
             const ownerDatasets = scatterDatasets
-                .filter(d => !excludedMembers.some(ex => d.label.toLowerCase().includes(ex)));
+                .filter(d => !excludedMembers.some(ex => d.label.toLowerCase().includes(ex)))
+                .map(d => ({ ...d, data: d.data.filter(p => filteredTicketIds.has(p.id)) }))
+                .filter(d => d.data.length > 0);
+
+            const filteredCycleTimes = filteredTickets.filter(t => t.isCompleted && t.cycleTime !== null).map(t => t.cycleTime).sort((a, b) => a - b);
+            const refMedian = filteredCycleTimes.length > 0 ? filteredCycleTimes[Math.floor(filteredCycleTimes.length / 2)] : 0;
+            const refMean   = filteredCycleTimes.length > 0 ? filteredCycleTimes.reduce((a, b) => a + b, 0) / filteredCycleTimes.length : 0;
 
             const allPoints = ownerDatasets.flatMap(d => d.data);
             const xMin = allPoints.length > 0 ? Math.min(...allPoints.map(p => p.x)) : 0;
@@ -511,8 +545,8 @@ function generateDashboardHTML(analysis) {
             const pad = (xMax - xMin) * 0.02;
 
             const refLines = [
-                { label: 'Median', value: trendStats.median, borderColor: 'rgba(0, 184, 148, 1)',    borderDash: [] },
-                { label: 'Mean',   value: trendStats.mean,   borderColor: 'rgba(253, 203, 110, 1)',  borderDash: [6, 3] }
+                { label: 'Median', value: refMedian, borderColor: 'rgba(0, 184, 148, 1)',    borderDash: [] },
+                { label: 'Mean',   value: refMean,   borderColor: 'rgba(253, 203, 110, 1)',  borderDash: [6, 3] }
             ].map(r => ({
                 label: r.label + ' (' + r.value.toFixed(1) + ' days)',
                 type: 'line',
@@ -566,16 +600,16 @@ function generateDashboardHTML(analysis) {
             charts.velocity = new Chart(velocityCtx, {
                 type: 'bar',
                 data: {
-                    labels: analyticsData.bySprint.map(s => s.name.split('(')[0].trim()),
+                    labels: filteredSprints.map(s => s.name.split('(')[0].trim()),
                     datasets: [
                         {
                             label: 'Created',
-                            data: analyticsData.bySprint.map(s => s.created),
+                            data: filteredSprints.map(s => s.created),
                             backgroundColor: '#667eea'
                         },
                         {
                             label: 'Completed',
-                            data: analyticsData.bySprint.map(s => s.completed),
+                            data: filteredSprints.map(s => s.completed),
                             backgroundColor: '#00b894'
                         }
                     ]
@@ -593,11 +627,11 @@ function generateDashboardHTML(analysis) {
             charts.bugs = new Chart(bugCtx, {
                 type: 'line',
                 data: {
-                    labels: analyticsData.bySprint.map(s => s.name.split('(')[0].trim()),
+                    labels: filteredSprints.map(s => s.name.split('(')[0].trim()),
                     datasets: [
                         {
                             label: 'Bugs Created',
-                            data: analyticsData.bySprint.map(s => s.tickets.filter(t => t.type === 'bug').length),
+                            data: filteredSprints.map(s => s.tickets.filter(t => t.type === 'bug').length),
                             borderColor: '#d63031',
                             backgroundColor: 'rgba(214, 48, 49, 0.1)',
                             borderWidth: 2,
@@ -607,7 +641,7 @@ function generateDashboardHTML(analysis) {
                         },
                         {
                             label: 'Bugs Completed',
-                            data: analyticsData.bySprint.map(s => s.tickets.filter(t => t.type === 'bug' && t.isCompleted).length),
+                            data: filteredSprints.map(s => s.tickets.filter(t => t.type === 'bug' && t.isCompleted).length),
                             borderColor: '#00b894',
                             backgroundColor: 'rgba(0, 184, 148, 0.1)',
                             borderWidth: 2,
@@ -627,16 +661,28 @@ function generateDashboardHTML(analysis) {
         }
         
         function renderTables() {
-            document.getElementById('table-epics').innerHTML = analyticsData.byEpic.map(e => \`
-                <tr>
-                    <td>\${e.name}</td>
-                    <td><span class="badge feature">\${e.created}</span></td>
-                    <td><span class="badge completed">\${e.completed}</span></td>
-                    <td><strong>\${e.completionRate}%</strong></td>
-                </tr>
-            \`).join('');
-            
-            document.getElementById('table-sprints').innerHTML = analyticsData.bySprint.map(s => \`
+            const filteredSprints = getFilteredSprints();
+            const filteredTickets = getFilteredTickets();
+
+            const epicTableMap = {};
+            filteredTickets.forEach(t => {
+                if (!epicTableMap[t.epic]) epicTableMap[t.epic] = { name: t.epic, created: 0, completed: 0 };
+                epicTableMap[t.epic].created++;
+                if (t.isCompleted) epicTableMap[t.epic].completed++;
+            });
+            document.getElementById('table-epics').innerHTML = Object.values(epicTableMap)
+                .sort((a, b) => b.completed - a.completed)
+                .map(e => {
+                    const rate = e.created > 0 ? ((e.completed / e.created) * 100).toFixed(1) : '0';
+                    return \`<tr>
+                        <td>\${e.name}</td>
+                        <td><span class="badge feature">\${e.created}</span></td>
+                        <td><span class="badge completed">\${e.completed}</span></td>
+                        <td><strong>\${rate}%</strong></td>
+                    </tr>\`;
+                }).join('');
+
+            document.getElementById('table-sprints').innerHTML = filteredSprints.map(s => \`
                 <tr>
                     <td>\${s.name}</td>
                     <td><span class="badge feature">\${s.created}</span></td>
@@ -644,10 +690,26 @@ function generateDashboardHTML(analysis) {
                     <td><strong>\${s.completionRate}%</strong></td>
                 </tr>
             \`).join('');
-            
+
+            const ownerTableMap = {};
+            filteredTickets.forEach(t => {
+                t.owner.split(';').map(o => o.trim()).forEach(owner => {
+                    if (!owner || owner === 'Unassigned') return;
+                    if (!ownerTableMap[owner]) ownerTableMap[owner] = { name: owner, tickets: 0, completed: 0, cycleTimes: [] };
+                    ownerTableMap[owner].tickets++;
+                    if (t.isCompleted) ownerTableMap[owner].completed++;
+                    if (t.cycleTime !== null && t.isCompleted) ownerTableMap[owner].cycleTimes.push(t.cycleTime);
+                });
+            });
             const excludedMembersTable = document.getElementById('exclude-members').value
                 .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-            document.getElementById('table-owners').innerHTML = analyticsData.byOwner
+            document.getElementById('table-owners').innerHTML = Object.values(ownerTableMap)
+                .map(o => ({
+                    ...o,
+                    avgCycleTime: o.cycleTimes.length > 0 ? parseFloat((o.cycleTimes.reduce((a, b) => a + b, 0) / o.cycleTimes.length).toFixed(1)) : 0,
+                    completionRate: o.tickets > 0 ? ((o.completed / o.tickets) * 100).toFixed(1) : '0'
+                }))
+                .sort((a, b) => a.avgCycleTime - b.avgCycleTime)
                 .filter(o => !excludedMembersTable.some(ex => o.name.toLowerCase().includes(ex)))
                 .slice(0, 15).map(o => \`
                 <tr>
@@ -750,7 +812,7 @@ function generateScatterData(byOwner, allTickets) {
     byOwner.slice(0, 10).forEach((owner, idx) => {
         const data = allTickets
             .filter(t => t.owner.includes(owner.name) && t.isCompleted && t.completedAt && t.cycleTime !== null)
-            .map(t => ({ x: new Date(t.completedAt).getTime(), y: t.cycleTime, name: t.name }));
+            .map(t => ({ x: new Date(t.completedAt).getTime(), y: t.cycleTime, name: t.name, id: t.id }));
 
         if (data.length > 0) {
             datasets.push({
