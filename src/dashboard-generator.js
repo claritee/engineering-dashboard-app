@@ -116,6 +116,11 @@ function generateDashboardHTML(analysis) {
             border: 1px solid #e9ecef;
         }
         .table-section h3 { margin-bottom: 15px; color: #333; font-size: 1.2em; }
+        .table-section h3.collapsible { cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+        .table-section h3.collapsible::after { content: '▲'; font-size: 0.7em; color: #888; transition: transform 0.2s; }
+        .table-section h3.collapsible.collapsed::after { transform: rotate(180deg); }
+        .table-collapsible-body { overflow: hidden; transition: max-height 0.25s ease, margin-top 0.25s ease; max-height: 2000px; margin-top: 15px; }
+        .table-collapsible-body.collapsed { max-height: 0; margin-top: 0; }
         table { width: 100%; border-collapse: collapse; }
         th {
             background: #667eea;
@@ -162,6 +167,10 @@ function generateDashboardHTML(analysis) {
                 <select id="sprint-filter" onchange="applyFilters()">
                     <option value="">All Sprints</option>
                 </select>
+            </div>
+            <div class="control-group">
+                <label for="exclude-members">Exclude Members:</label>
+                <input type="text" id="exclude-members" placeholder="e.g. alice, bob@company.com" oninput="applyFilters()" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 240px;" />
             </div>
             <button onclick="resetFilters()">Reset Filters</button>
         </div>
@@ -216,6 +225,13 @@ function generateDashboardHTML(analysis) {
                         <canvas id="chart-epic-pie"></canvas>
                     </div>
                 </div>
+
+                <div class="chart-container">
+                    <h3>🗂️ Tickets by Epic Category</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="chart-epic-category"></canvas>
+                    </div>
+                </div>
             </div>
             
             <div class="charts-grid">
@@ -248,35 +264,39 @@ function generateDashboardHTML(analysis) {
             
             <div class="tables-grid">
                 <div class="table-section">
-                    <h3>🎯 Velocity by Epic</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Epic</th>
-                                <th>Created</th>
-                                <th>Completed</th>
-                                <th>Completion Rate</th>
-                            </tr>
-                        </thead>
-                        <tbody id="table-epics">
-                        </tbody>
-                    </table>
+                    <h3 class="collapsible" onclick="toggleTable(this, 'body-epics')">🎯 Velocity by Epic</h3>
+                    <div id="body-epics" class="table-collapsible-body">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Epic</th>
+                                    <th>Created</th>
+                                    <th>Completed</th>
+                                    <th>Completion Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-epics">
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                
+
                 <div class="table-section">
-                    <h3>🏃 Velocity by Sprint</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Sprint</th>
-                                <th>Created</th>
-                                <th>Completed</th>
-                                <th>Completion Rate</th>
-                            </tr>
-                        </thead>
-                        <tbody id="table-sprints">
-                        </tbody>
-                    </table>
+                    <h3 class="collapsible" onclick="toggleTable(this, 'body-sprints')">🏃 Velocity by Sprint</h3>
+                    <div id="body-sprints" class="table-collapsible-body">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Sprint</th>
+                                    <th>Created</th>
+                                    <th>Completed</th>
+                                    <th>Completion Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-sprints">
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
                 
                 <div class="table-section">
@@ -342,6 +362,7 @@ function generateDashboardHTML(analysis) {
         
         function resetFilters() {
             document.getElementById('sprint-filter').value = '';
+            document.getElementById('exclude-members').value = '';
             applyFilters();
         }
         
@@ -403,6 +424,61 @@ function generateDashboardHTML(analysis) {
                 }
             });
             
+            const epicCategoryCtx = document.getElementById('chart-epic-category').getContext('2d');
+            if (charts.epicCategory) charts.epicCategory.destroy();
+            (function() {
+                const engineeringEpics = new Set([
+                    'backend upgrades',
+                    'create integration tests',
+                    'merge to main: ship to prod (incremental releases)',
+                    'delete your old code, david',
+                    'application monitoring',
+                    'data improvements',
+                    'create ci/cd pipeline'
+                ]);
+                const categoryTotals = { BAU: 0, 'Tech Improvements': 0, Engineering: 0, Product: 0 };
+                analyticsData.byEpic.forEach(e => {
+                    const key = e.name.toLowerCase().trim();
+                    if (key === 'bau') categoryTotals['BAU'] += e.created;
+                    else if (key === 'tech improvements') categoryTotals['Tech Improvements'] += e.created;
+                    else if (engineeringEpics.has(key)) categoryTotals['Engineering'] += e.created;
+                    else categoryTotals['Product'] += e.created;
+                });
+                const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
+                const labels = Object.keys(categoryTotals).map(k => {
+                    const pct = total > 0 ? ((categoryTotals[k] / total) * 100).toFixed(1) : '0.0';
+                    return k + ' (' + pct + '%)';
+                });
+                charts.epicCategory = new Chart(epicCategoryCtx, {
+                    type: 'pie',
+                    data: {
+                        labels,
+                        datasets: [{
+                            data: Object.values(categoryTotals),
+                            backgroundColor: ['#667eea', '#00b894', '#f5576c', '#ffd89b'],
+                            borderColor: 'white',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right' },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const t = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const pct = t > 0 ? ((context.parsed / t) * 100).toFixed(1) : '0.0';
+                                        return context.label.split(' (')[0] + ': ' + context.parsed + ' tickets (' + pct + '%)';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+
             const scatterCtx = document.getElementById('chart-scatter-cycle-time').getContext('2d');
             if (charts.scatter) charts.scatter.destroy();
             
@@ -413,7 +489,10 @@ function generateDashboardHTML(analysis) {
                 'rgba(162, 155, 254, 0.7)', 'rgba(116, 185, 255, 0.7)', 'rgba(129, 236, 236, 0.7)'
             ];
             
-            const ownerDatasets = scatterDatasets.slice(0, -4);
+            const excludedMembers = document.getElementById('exclude-members').value
+                .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            const ownerDatasets = scatterDatasets.slice(0, -4)
+                .filter(d => !excludedMembers.some(ex => d.label.toLowerCase().includes(ex)));
             const rawTrendLines = scatterDatasets.slice(-4);
 
             const trendLineStyle = {
@@ -552,7 +631,11 @@ function generateDashboardHTML(analysis) {
                 </tr>
             \`).join('');
             
-            document.getElementById('table-owners').innerHTML = analyticsData.byOwner.slice(0, 15).map(o => \`
+            const excludedMembersTable = document.getElementById('exclude-members').value
+                .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            document.getElementById('table-owners').innerHTML = analyticsData.byOwner
+                .filter(o => !excludedMembersTable.some(ex => o.name.toLowerCase().includes(ex)))
+                .slice(0, 15).map(o => \`
                 <tr>
                     <td>\${o.name}</td>
                     <td><strong>\${o.avgCycleTime}</strong></td>
@@ -562,6 +645,12 @@ function generateDashboardHTML(analysis) {
             \`).join('');
         }
         
+        function toggleTable(heading, bodyId) {
+            const body = document.getElementById(bodyId);
+            const collapsed = body.classList.toggle('collapsed');
+            heading.classList.toggle('collapsed', collapsed);
+        }
+
         window.addEventListener('load', initializeDashboard);
     </script>
 </body>
