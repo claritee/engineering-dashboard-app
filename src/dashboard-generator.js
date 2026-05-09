@@ -594,21 +594,34 @@ function generateDashboardHTML(analysis) {
                 type: 'line',
                 data: {
                     labels: analyticsData.bySprint.map(s => s.name.split('(')[0].trim()),
-                    datasets: [{
-                        label: 'Bugs (approx)',
-                        data: analyticsData.bySprint.map((s, i) => Math.floor(s.created * 0.15)),
-                        borderColor: '#d63031',
-                        backgroundColor: 'rgba(214, 48, 49, 0.1)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.4
-                    }]
+                    datasets: [
+                        {
+                            label: 'Bugs Created',
+                            data: analyticsData.bySprint.map(s => s.tickets.filter(t => t.type === 'bug').length),
+                            borderColor: '#d63031',
+                            backgroundColor: 'rgba(214, 48, 49, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 4
+                        },
+                        {
+                            label: 'Bugs Completed',
+                            data: analyticsData.bySprint.map(s => s.tickets.filter(t => t.type === 'bug' && t.isCompleted).length),
+                            borderColor: '#00b894',
+                            backgroundColor: 'rgba(0, 184, 148, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 4
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { legend: { position: 'top' } },
-                    scales: { y: { beginAtZero: true } }
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
                 }
             });
         }
