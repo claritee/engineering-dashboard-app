@@ -13,10 +13,10 @@ function generateDashboardHTML(analysis) {
     } = analysis;
 
     // Generate scatter plot data
-    const scatterDatasets = generateScatterData(byOwner, bySprint, allTickets);
+    const scatterDatasets = generateScatterData(byOwner, allTickets);
 
-    // Generate trend stats
-    const trendStats = generateTrendStats(bySprint, allTickets);
+    // Generate overall cycle time stats for reference lines
+    const trendStats = computeOverallCycleStats(allTickets);
 
     // Generate per-epic weekly ticket data
     const epicWeeklyData = computeEpicWeeklyData(allTickets);
@@ -499,49 +499,36 @@ function generateDashboardHTML(analysis) {
 
             const scatterCtx = document.getElementById('chart-scatter-cycle-time').getContext('2d');
             if (charts.scatter) charts.scatter.destroy();
-            
-            const colors = [
-                'rgba(102, 126, 234, 0.7)', 'rgba(245, 87, 108, 0.7)', 'rgba(255, 216, 155, 0.7)',
-                'rgba(0, 212, 255, 0.7)', 'rgba(255, 107, 107, 0.7)', 'rgba(78, 205, 196, 0.7)',
-                'rgba(149, 225, 211, 0.7)', 'rgba(249, 202, 36, 0.7)', 'rgba(108, 92, 231, 0.7)',
-                'rgba(162, 155, 254, 0.7)', 'rgba(116, 185, 255, 0.7)', 'rgba(129, 236, 236, 0.7)'
-            ];
-            
+
             const excludedMembers = document.getElementById('exclude-members').value
                 .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-            const ownerDatasets = scatterDatasets.slice(0, -4)
+            const ownerDatasets = scatterDatasets
                 .filter(d => !excludedMembers.some(ex => d.label.toLowerCase().includes(ex)));
-            const rawTrendLines = scatterDatasets.slice(-4);
 
-            const trendLineStyle = {
-                Mean:   { borderColor: 'rgba(253, 203, 110, 1)',   borderDash: [6, 3] },
-                Median: { borderColor: 'rgba(0, 184, 148, 1)',     borderDash: [] },
-                Q1:     { borderColor: 'rgba(116, 185, 255, 0.9)', borderDash: [3, 3] },
-                Q3:     { borderColor: 'rgba(253, 121, 168, 0.9)', borderDash: [3, 3] }
-            };
-            const trendDataKey = { Mean: 'mean', Median: 'median', Q1: 'q1', Q3: 'q3' };
-            const populatedTrendLines = rawTrendLines.map(trend => {
-                const style = trendLineStyle[trend.label] || {};
-                const key = trendDataKey[trend.label];
-                return {
-                    label: trend.label,
-                    type: 'line',
-                    data: Object.entries(trendStats)
-                        .map(([idx, s]) => ({ x: parseInt(idx), y: parseFloat(s[key].toFixed(1)) })),
-                    showLine: true,
-                    fill: false,
-                    borderColor: style.borderColor,
-                    backgroundColor: style.borderColor,
-                    borderWidth: 2,
-                    borderDash: style.borderDash,
-                    pointRadius: 3,
-                    tension: 0.3
-                };
-            });
+            const allPoints = ownerDatasets.flatMap(d => d.data);
+            const xMin = allPoints.length > 0 ? Math.min(...allPoints.map(p => p.x)) : 0;
+            const xMax = allPoints.length > 0 ? Math.max(...allPoints.map(p => p.x)) : 1;
+            const pad = (xMax - xMin) * 0.02;
+
+            const refLines = [
+                { label: 'Median', value: trendStats.median, borderColor: 'rgba(0, 184, 148, 1)',    borderDash: [] },
+                { label: 'Mean',   value: trendStats.mean,   borderColor: 'rgba(253, 203, 110, 1)',  borderDash: [6, 3] }
+            ].map(r => ({
+                label: r.label + ' (' + r.value.toFixed(1) + ' days)',
+                type: 'line',
+                data: [{ x: xMin - pad, y: r.value }, { x: xMax + pad, y: r.value }],
+                borderColor: r.borderColor,
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                borderDash: r.borderDash,
+                pointRadius: 0,
+                fill: false,
+                showLine: true
+            }));
 
             charts.scatter = new Chart(scatterCtx, {
                 type: 'scatter',
-                data: { datasets: ownerDatasets.concat(populatedTrendLines) },
+                data: { datasets: ownerDatasets.concat(refLines) },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
@@ -550,7 +537,8 @@ function generateDashboardHTML(analysis) {
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    return context.raw.y ? context.raw.y.toFixed(1) + ' days' : '';
+                                    if (context.raw.name) return context.raw.name + ': ' + context.raw.y + ' days';
+                                    return context.dataset.label;
                                 }
                             }
                         }
@@ -559,21 +547,16 @@ function generateDashboardHTML(analysis) {
                         x: {
                             type: 'linear',
                             position: 'bottom',
-                            title: { display: false },
-                            min: -0.5,
-                            max: ${bySprint.length - 0.5},
                             ticks: {
-                                stepSize: 1,
                                 callback: function(value) {
-                                    const idx = Math.round(value);
-                                    const sprint = analyticsData.bySprint[idx];
-                                    return sprint ? sprint.name : '';
+                                    return new Date(value).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: '2-digit' });
                                 },
                                 maxRotation: 45,
-                                minRotation: 30
+                                minRotation: 30,
+                                maxTicksLimit: 12
                             }
                         },
-                        y: { title: { display: true, text: 'Cycle Time (days)' } }
+                        y: { beginAtZero: true, title: { display: true, text: 'Cycle Time (days)' } }
                     }
                 }
             });
@@ -740,30 +723,22 @@ function generateDashboardHTML(analysis) {
 }
 
 /**
- * Generate scatter plot data from owner and sprint information
+ * Generate scatter plot data — one point per completed ticket per owner
  */
-function generateScatterData(byOwner, bySprint, allTickets) {
+function generateScatterData(byOwner, allTickets) {
     const datasets = [];
     const colors = [
         'rgba(102, 126, 234, 0.7)', 'rgba(245, 87, 108, 0.7)', 'rgba(255, 216, 155, 0.7)',
-        'rgba(0, 212, 255, 0.7)', 'rgba(255, 107, 107, 0.7)', 'rgba(78, 205, 196, 0.7)'
+        'rgba(0, 212, 255, 0.7)', 'rgba(255, 107, 107, 0.7)', 'rgba(78, 205, 196, 0.7)',
+        'rgba(149, 225, 211, 0.7)', 'rgba(249, 202, 36, 0.7)', 'rgba(108, 92, 231, 0.7)',
+        'rgba(162, 155, 254, 0.7)', 'rgba(116, 185, 255, 0.7)', 'rgba(129, 236, 236, 0.7)'
     ];
-    
-    // Add owner datasets
+
     byOwner.slice(0, 10).forEach((owner, idx) => {
-        const ownerTickets = allTickets.filter(t => 
-            t.owner.includes(owner.name) && t.isCompleted && t.sprint
-        );
-        
-        const data = [];
-        bySprint.forEach((sprint, sprintIdx) => {
-            const sprintTickets = ownerTickets.filter(t => t.sprint.name === sprint.name);
-            if (sprintTickets.length > 0) {
-                const avgCycleTime = sprintTickets.reduce((sum, t) => sum + (t.cycleTime || 0), 0) / sprintTickets.length;
-                data.push({ x: sprintIdx, y: Math.round(avgCycleTime) });
-            }
-        });
-        
+        const data = allTickets
+            .filter(t => t.owner.includes(owner.name) && t.isCompleted && t.completedAt && t.cycleTime !== null)
+            .map(t => ({ x: new Date(t.completedAt).getTime(), y: t.cycleTime, name: t.name }));
+
         if (data.length > 0) {
             datasets.push({
                 label: owner.name.split('@')[0],
@@ -772,41 +747,32 @@ function generateScatterData(byOwner, bySprint, allTickets) {
                 backgroundColor: colors[idx % colors.length],
                 showLine: false,
                 fill: false,
-                pointRadius: 6
+                pointRadius: 5,
+                pointHoverRadius: 7
             });
         }
     });
-    
-    // Add trend lines (will be calculated on client side)
-    datasets.push({ label: 'Mean', data: [] });
-    datasets.push({ label: 'Median', data: [] });
-    datasets.push({ label: 'Q1', data: [] });
-    datasets.push({ label: 'Q3', data: [] });
-    
+
     return datasets;
 }
 
 /**
- * Generate trend statistics
+ * Compute overall cycle time statistics for reference lines
  */
-function generateTrendStats(bySprint, allTickets) {
-    const stats = {};
-    
-    bySprint.forEach((sprint, idx) => {
-        const sprintTickets = allTickets.filter(t => t.sprint && t.sprint.name === sprint.name && t.cycleTime !== null && t.isCompleted);
-        const cycleTimes = sprintTickets.map(t => t.cycleTime).sort((a, b) => a - b);
-        
-        if (cycleTimes.length > 0) {
-            stats[idx] = {
-                mean: cycleTimes.reduce((a, b) => a + b) / cycleTimes.length,
-                median: cycleTimes[Math.floor(cycleTimes.length / 2)],
-                q1: cycleTimes[Math.floor(cycleTimes.length * 0.25)],
-                q3: cycleTimes[Math.floor(cycleTimes.length * 0.75)]
-            };
-        }
-    });
-    
-    return stats;
+function computeOverallCycleStats(allTickets) {
+    const cycleTimes = allTickets
+        .filter(t => t.isCompleted && t.cycleTime !== null)
+        .map(t => t.cycleTime)
+        .sort((a, b) => a - b);
+
+    if (cycleTimes.length === 0) return { mean: 0, median: 0, q1: 0, q3: 0 };
+
+    return {
+        mean: parseFloat((cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length).toFixed(1)),
+        median: cycleTimes[Math.floor(cycleTimes.length / 2)],
+        q1: cycleTimes[Math.floor(cycleTimes.length * 0.25)],
+        q3: cycleTimes[Math.floor(cycleTimes.length * 0.75)]
+    };
 }
 
 /**
