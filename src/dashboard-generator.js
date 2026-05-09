@@ -14,9 +14,12 @@ function generateDashboardHTML(analysis) {
 
     // Generate scatter plot data
     const scatterDatasets = generateScatterData(byOwner, bySprint, allTickets);
-    
+
     // Generate trend stats
     const trendStats = generateTrendStats(bySprint, allTickets);
+
+    // Generate per-epic weekly ticket data
+    const epicWeeklyData = computeEpicWeeklyData(allTickets);
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -264,8 +267,8 @@ function generateDashboardHTML(analysis) {
             
             <div class="tables-grid">
                 <div class="table-section">
-                    <h3 class="collapsible" onclick="toggleTable(this, 'body-epics')">🎯 Velocity by Epic</h3>
-                    <div id="body-epics" class="table-collapsible-body">
+                    <h3 class="collapsible collapsed" onclick="toggleTable(this, 'body-epics')">🎯 Velocity by Epic</h3>
+                    <div id="body-epics" class="table-collapsible-body collapsed">
                         <table>
                             <thead>
                                 <tr>
@@ -282,8 +285,8 @@ function generateDashboardHTML(analysis) {
                 </div>
 
                 <div class="table-section">
-                    <h3 class="collapsible" onclick="toggleTable(this, 'body-sprints')">🏃 Velocity by Sprint</h3>
-                    <div id="body-sprints" class="table-collapsible-body">
+                    <h3 class="collapsible collapsed" onclick="toggleTable(this, 'body-sprints')">🏃 Velocity by Sprint</h3>
+                    <div id="body-sprints" class="table-collapsible-body collapsed">
                         <table>
                             <thead>
                                 <tr>
@@ -299,6 +302,19 @@ function generateDashboardHTML(analysis) {
                     </div>
                 </div>
                 
+                <div class="table-section">
+                    <h3 class="collapsible collapsed" onclick="toggleEpicWeekly(this)">📅 Weekly Tickets: Created vs Completed by Epic</h3>
+                    <div id="section-epic-weekly" class="table-collapsible-body collapsed">
+                        <div style="margin-bottom: 16px;">
+                            <label for="epic-weekly-select" style="font-weight: 600; margin-right: 10px;">Epic:</label>
+                            <select id="epic-weekly-select" onchange="renderEpicWeeklyChart()" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"></select>
+                        </div>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="chart-epic-weekly"></canvas>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="table-section">
                     <h3>⏱️ Top Owners by Avg Cycle Time</h3>
                     <table>
@@ -316,7 +332,7 @@ function generateDashboardHTML(analysis) {
                 </div>
             </div>
         </div>
-        
+
         <div class="footer">
             <p>Data refreshed at <span id="timestamp-footer"></span></p>
         </div>
@@ -334,6 +350,7 @@ function generateDashboardHTML(analysis) {
         
         const scatterDatasets = ${JSON.stringify(scatterDatasets)};
         const trendStats = ${JSON.stringify(trendStats)};
+        const epicWeeklyData = ${JSON.stringify(epicWeeklyData)};
         
         let charts = {};
         
@@ -341,6 +358,7 @@ function generateDashboardHTML(analysis) {
             populateFilters();
             renderCharts();
             renderTables();
+            populateEpicWeeklySelect();
             document.getElementById('timestamp').textContent = new Date().toLocaleString();
             document.getElementById('timestamp-footer').textContent = new Date().toLocaleString();
         }
@@ -645,6 +663,68 @@ function generateDashboardHTML(analysis) {
             \`).join('');
         }
         
+        function populateEpicWeeklySelect() {
+            const select = document.getElementById('epic-weekly-select');
+            Object.keys(epicWeeklyData).sort().forEach(epic => {
+                const opt = document.createElement('option');
+                opt.value = epic;
+                opt.textContent = epic;
+                select.appendChild(opt);
+            });
+        }
+
+        function toggleEpicWeekly(heading) {
+            const body = document.getElementById('section-epic-weekly');
+            const collapsed = body.classList.toggle('collapsed');
+            heading.classList.toggle('collapsed', collapsed);
+            if (!collapsed) renderEpicWeeklyChart();
+        }
+
+        function renderEpicWeeklyChart() {
+            const epic = document.getElementById('epic-weekly-select').value;
+            const data = epicWeeklyData[epic];
+            if (!data) return;
+            const ctx = document.getElementById('chart-epic-weekly').getContext('2d');
+            if (charts.epicWeekly) charts.epicWeekly.destroy();
+            charts.epicWeekly = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.weeks,
+                    datasets: [
+                        {
+                            label: 'Created',
+                            data: data.created,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            borderWidth: 2,
+                            pointRadius: 4
+                        },
+                        {
+                            label: 'Completed',
+                            data: data.completed,
+                            borderColor: '#00b894',
+                            backgroundColor: 'rgba(0, 184, 148, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            borderWidth: 2,
+                            pointRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        x: { title: { display: true, text: 'Week starting' } },
+                        y: { beginAtZero: true, title: { display: true, text: 'Tickets' }, ticks: { stepSize: 1 } }
+                    }
+                }
+            });
+        }
+
         function toggleTable(heading, bodyId) {
             const body = document.getElementById(bodyId);
             const collapsed = body.classList.toggle('collapsed');
@@ -727,6 +807,53 @@ function generateTrendStats(bySprint, allTickets) {
     });
     
     return stats;
+}
+
+/**
+ * Compute per-epic weekly created/completed ticket counts
+ */
+function computeEpicWeeklyData(allTickets) {
+    function weekStart(dateStr) {
+        if (!dateStr) return null;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return null;
+        const day = d.getDay();
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+        monday.setHours(0, 0, 0, 0);
+        return monday.toISOString().split('T')[0];
+    }
+
+    const epicMap = {};
+    allTickets.forEach(ticket => {
+        const epic = ticket.epic || '(Unassigned)';
+        if (!epicMap[epic]) epicMap[epic] = {};
+
+        const cw = weekStart(ticket.createdAt);
+        if (cw) {
+            if (!epicMap[epic][cw]) epicMap[epic][cw] = { created: 0, completed: 0 };
+            epicMap[epic][cw].created++;
+        }
+
+        if (ticket.isCompleted && ticket.completedAt) {
+            const dw = weekStart(ticket.completedAt);
+            if (dw) {
+                if (!epicMap[epic][dw]) epicMap[epic][dw] = { created: 0, completed: 0 };
+                epicMap[epic][dw].completed++;
+            }
+        }
+    });
+
+    const result = {};
+    for (const [epic, weekMap] of Object.entries(epicMap)) {
+        const weeks = Object.keys(weekMap).sort();
+        result[epic] = {
+            weeks,
+            created: weeks.map(w => weekMap[w].created),
+            completed: weeks.map(w => weekMap[w].completed)
+        };
+    }
+    return result;
 }
 
 module.exports = { generateDashboardHTML };
