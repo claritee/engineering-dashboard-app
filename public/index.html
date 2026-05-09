@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering Dashboard Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        .header p {
+            font-size: 1em;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9fa;
+        }
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f0f0;
+        }
+        .upload-area.dragover {
+            border-color: #00b894;
+            background: #e8f5e9;
+        }
+        .upload-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+        .upload-area h2 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.5em;
+        }
+        .upload-area p {
+            color: #666;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        #fileInput {
+            display: none;
+        }
+        .file-list {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: none;
+        }
+        .file-list.active {
+            display: block;
+        }
+        .file-list h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        .file-item {
+            background: white;
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #e9ecef;
+        }
+        .file-item .name {
+            color: #333;
+            font-weight: 600;
+        }
+        .file-item .remove {
+            background: #d63031;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .file-item .remove:hover {
+            background: #b71c1c;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .button-group button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-upload {
+            background: #667eea;
+            color: white;
+        }
+        .btn-upload:hover:not(:disabled) {
+            background: #764ba2;
+        }
+        .btn-clear {
+            background: #e9ecef;
+            color: #333;
+        }
+        .btn-clear:hover {
+            background: #dee2e6;
+        }
+        .btn-upload:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            color: #1565c0;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .loading.active {
+            display: block;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .results {
+            display: none;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .results.active {
+            display: block;
+        }
+        .results h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        .result-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        .result-link {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+            text-decoration: none;
+            color: #667eea;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .result-link:hover {
+            background: #f0f0f0;
+            color: #764ba2;
+        }
+        .result-link.primary {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        .result-link.primary:hover {
+            background: #764ba2;
+        }
+        .result-link .icon {
+            font-size: 1.3em;
+        }
+        .error {
+            display: none;
+            background: #ffebee;
+            border-left: 4px solid #d63031;
+            color: #c0392b;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .error.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Engineering Dashboard Generator</h1>
+            <p>Upload Shortcut CSV files to generate reports</p>
+        </div>
+        
+        <div class="content">
+            <div class="info-box">
+                <strong>📝 How to use:</strong> Export your Shortcut sprint iterations as CSV files, upload them here, and we'll generate an interactive dashboard with detailed analytics and downloadable reports.
+            </div>
+            
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📤</div>
+                    <h2>Drop CSV files here or click to select</h2>
+                    <p>
+                        Supports multiple files from Shortcut iterations<br>
+                        <small>Each file should contain iteration data with columns: name, type, epic, owners, started_at, completed_at, is_completed, etc.</small>
+                    </p>
+                </div>
+                <input type="file" id="fileInput" multiple accept=".csv" />
+                
+                <div class="file-list" id="fileList">
+                    <h3>Selected Files:</h3>
+                    <div id="fileItems"></div>
+                </div>
+                
+                <div class="button-group">
+                    <button type="button" class="btn-upload" id="selectBtn" onclick="document.getElementById('fileInput').click()">
+                        Select CSV Files
+                    </button>
+                    <button type="button" class="btn-clear" id="clearBtn" onclick="clearFiles()">
+                        Clear
+                    </button>
+                    <button type="submit" class="btn-upload" id="submitBtn" disabled>
+                        Generate Dashboard
+                    </button>
+                </div>
+                
+                <div class="error" id="error"></div>
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing your data and generating dashboard...</p>
+                </div>
+            </form>
+            
+            <div class="results" id="results">
+                <h3>✅ Dashboard Generated Successfully!</h3>
+                <div class="result-links">
+                    <a href="#" class="result-link primary" id="dashboardLink" target="_blank">
+                        <span class="icon">📊</span>
+                        <span>View Interactive Dashboard</span>
+                    </a>
+                    <a href="#" class="result-link" id="analysisLink" download>
+                        <span class="icon">📄</span>
+                        <span>Download Analysis Report</span>
+                    </a>
+                    <a href="#" class="result-link" id="sprintLink" download>
+                        <span class="icon">📈</span>
+                        <span>Download Sprint Velocity CSV</span>
+                    </a>
+                    <a href="#" class="result-link" id="epicLink" download>
+                        <span class="icon">🎯</span>
+                        <span>Download Epic Velocity CSV</span>
+                    </a>
+                    <a href="#" class="result-link" id="ownerLink" download>
+                        <span class="icon">👥</span>
+                        <span>Download Owner Performance CSV</span>
+                    </a>
+                    <a href="#" class="result-link" id="typeLink" download>
+                        <span class="icon">🏷️</span>
+                        <span>Download Type Analysis CSV</span>
+                    </a>
+                </div>
+                <div style="margin-top: 20px;">
+                    <button type="button" class="btn-upload" onclick="resetForm()" style="width: 100%;">
+                        ← Upload Different Files
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const fileItems = document.getElementById('fileItems');
+        const submitBtn = document.getElementById('submitBtn');
+        const uploadForm = document.getElementById('uploadForm');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const error = document.getElementById('error');
+        
+        let selectedFiles = [];
+        
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'));
+            if (files.length > 0) {
+                selectedFiles = files;
+                updateFileList();
+            }
+        });
+        
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            selectedFiles = Array.from(e.target.files);
+            updateFileList();
+        });
+        
+        function updateFileList() {
+            if (selectedFiles.length > 0) {
+                fileList.classList.add('active');
+                submitBtn.disabled = false;
+                fileItems.innerHTML = selectedFiles.map((file, idx) => `
+                    <div class="file-item">
+                        <span class="name">📄 ${file.name}</span>
+                        <button type="button" class="remove" onclick="removeFile(${idx})">Remove</button>
+                    </div>
+                `).join('');
+            } else {
+                fileList.classList.remove('active');
+                submitBtn.disabled = true;
+            }
+        }
+        
+        function removeFile(idx) {
+            selectedFiles.splice(idx, 1);
+            updateFileList();
+        }
+        
+        function clearFiles() {
+            selectedFiles = [];
+            fileInput.value = '';
+            updateFileList();
+        }
+        
+        function resetForm() {
+            clearFiles();
+            uploadForm.reset();
+            results.classList.remove('active');
+            error.classList.remove('active');
+            loading.classList.remove('active');
+        }
+        
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (selectedFiles.length === 0) {
+                showError('Please select at least one CSV file');
+                return;
+            }
+            
+            const formData = new FormData();
+            selectedFiles.forEach(file => {
+                formData.append('csvFiles', file);
+            });
+            
+            try {
+                loading.classList.add('active');
+                error.classList.remove('active');
+                results.classList.remove('active');
+                
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Upload failed');
+                }
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update result links
+                    document.getElementById('dashboardLink').href = data.dashboardUrl;
+                    document.getElementById('analysisLink').href = data.reports.analysis;
+                    document.getElementById('sprintLink').href = data.reports.sprintVelocity;
+                    document.getElementById('epicLink').href = data.reports.epicVelocity;
+                    document.getElementById('ownerLink').href = data.reports.ownerPerformance;
+                    document.getElementById('typeLink').href = data.reports.typeAnalysis;
+                    
+                    loading.classList.remove('active');
+                    results.classList.add('active');
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (err) {
+                showError(err.message);
+                loading.classList.remove('active');
+            }
+        });
+        
+        function showError(message) {
+            error.textContent = '❌ Error: ' + message;
+            error.classList.add('active');
+        }
+    </script>
+</body>
+</html>
