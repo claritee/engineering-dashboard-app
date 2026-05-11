@@ -193,6 +193,10 @@ function generateDashboardHTML(analysis) {
                     <div class="metric-value">${summary.avgCycleTime} days</div>
                 </div>
                 <div class="metric-card">
+                    <h3>Median Cycle Time</h3>
+                    <div class="metric-value">${summary.medianCycleTime} days</div>
+                </div>
+                <div class="metric-card">
                     <h3>Bug Closure Rate</h3>
                     <div class="metric-value">${bugs.closureRate}%</div>
                 </div>
@@ -322,6 +326,7 @@ function generateDashboardHTML(analysis) {
                             <tr>
                                 <th>Owner</th>
                                 <th>Avg Cycle Days</th>
+                                <th>Median Cycle Time</th>
                                 <th>Tickets</th>
                                 <th>Completion Rate</th>
                             </tr>
@@ -710,17 +715,23 @@ function generateDashboardHTML(analysis) {
             const excludedMembersTable = document.getElementById('exclude-members').value
                 .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
             document.getElementById('table-owners').innerHTML = Object.values(ownerTableMap)
-                .map(o => ({
-                    ...o,
-                    avgCycleTime: o.cycleTimes.length > 0 ? parseFloat((o.cycleTimes.reduce((a, b) => a + b, 0) / o.cycleTimes.length).toFixed(1)) : 0,
-                    completionRate: o.tickets > 0 ? ((o.completed / o.tickets) * 100).toFixed(1) : '0'
-                }))
+                .map(o => {
+                    const sorted = [...o.cycleTimes].sort((a, b) => a - b);
+                    const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
+                    return {
+                        ...o,
+                        avgCycleTime: o.cycleTimes.length > 0 ? parseFloat((o.cycleTimes.reduce((a, b) => a + b, 0) / o.cycleTimes.length).toFixed(1)) : 0,
+                        medianCycleTime: median,
+                        completionRate: o.tickets > 0 ? ((o.completed / o.tickets) * 100).toFixed(1) : '0'
+                    };
+                })
                 .sort((a, b) => a.avgCycleTime - b.avgCycleTime)
                 .filter(o => !excludedMembersTable.some(ex => o.name.toLowerCase().includes(ex)))
                 .slice(0, 15).map(o => \`
                 <tr>
                     <td>\${o.name}</td>
                     <td><strong>\${o.avgCycleTime}</strong></td>
+                    <td>\${o.medianCycleTime}</td>
                     <td>\${o.tickets}</td>
                     <td>\${o.completionRate}%</td>
                 </tr>
