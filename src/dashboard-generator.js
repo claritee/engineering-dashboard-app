@@ -197,6 +197,10 @@ function generateDashboardHTML(analysis) {
                     <div class="metric-value">${summary.medianCycleTime} days</div>
                 </div>
                 <div class="metric-card">
+                    <h3>Median Cycle Time (Last 2 weeks)</h3>
+                    <div class="metric-value" id="metric-median-2weeks">-</div>
+                </div>
+                <div class="metric-card">
                     <h3>Bug Closure Rate</h3>
                     <div class="metric-value">${bugs.closureRate}%</div>
                 </div>
@@ -412,6 +416,51 @@ function generateDashboardHTML(analysis) {
         function renderCharts() {
             const filteredSprints = getFilteredSprints();
             const filteredTickets = getFilteredTickets();
+            const excludedMembers = document.getElementById('exclude-members').value
+                .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+            // Filter tickets by excluded members
+            const ticketsAfterMemberFilter = filteredTickets.filter(t => {
+                return !excludedMembers.some(ex => t.owner.toLowerCase().includes(ex));
+            });
+
+            // Update metric cards with recalculated values
+            const completedTickets = ticketsAfterMemberFilter.filter(t => t.isCompleted && t.cycleTime !== null);
+            const cycleTimes = completedTickets.map(t => t.cycleTime).sort((a, b) => a - b);
+            const newMedian = cycleTimes.length > 0 ? cycleTimes[Math.floor(cycleTimes.length / 2)] : 0;
+            const newAvg = cycleTimes.length > 0 ? (cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length).toFixed(1) : 0;
+
+            // Calculate median cycle time for last 2 weeks from most recent data
+            if (completedTickets.length > 0) {
+                const mostRecentDate = new Date(Math.max(...completedTickets.map(t => new Date(t.completedAt).getTime())));
+                const twoWeeksBeforeMostRecent = new Date(mostRecentDate);
+                twoWeeksBeforeMostRecent.setDate(twoWeeksBeforeMostRecent.getDate() - 14);
+
+                const last2WeeksTickets = completedTickets.filter(t => {
+                    const completedDate = new Date(t.completedAt);
+                    return completedDate >= twoWeeksBeforeMostRecent && completedDate <= mostRecentDate;
+                });
+                const last2WeeksCycleTimes = last2WeeksTickets.map(t => t.cycleTime).sort((a, b) => a - b);
+                var medianLast2Weeks = last2WeeksCycleTimes.length > 0 ? last2WeeksCycleTimes[Math.floor(last2WeeksCycleTimes.length / 2)] : 0;
+            } else {
+                var medianLast2Weeks = 0;
+            }
+
+            document.querySelectorAll('.metric-card').forEach((card, idx) => {
+                const heading = card.querySelector('h3');
+                if (heading && heading.textContent === 'Median Cycle Time') {
+                    card.querySelector('.metric-value').textContent = newMedian + ' days';
+                }
+                if (heading && heading.textContent === 'Avg Cycle Time') {
+                    card.querySelector('.metric-value').textContent = newAvg + ' days';
+                }
+            });
+
+            const metric2weeks = document.getElementById('metric-median-2weeks');
+            if (metric2weeks) {
+                metric2weeks.textContent = medianLast2Weeks + ' days';
+            }
+
             const typeCtx = document.getElementById('chart-story-type').getContext('2d');
             if (charts.storyType) charts.storyType.destroy();
             const filteredByType = { feature: 0, bug: 0, chore: 0, other: 0 };
@@ -538,15 +587,30 @@ function generateDashboardHTML(analysis) {
             const scatterCtx = document.getElementById('chart-scatter-cycle-time').getContext('2d');
             if (charts.scatter) charts.scatter.destroy();
 
-            const excludedMembers = document.getElementById('exclude-members').value
-                .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
             const filteredTicketIds = new Set(filteredTickets.map(t => t.id));
             const ownerDatasets = scatterDatasets
-                .filter(d => !excludedMembers.some(ex => d.label.toLowerCase().includes(ex)))
-                .map(d => ({ ...d, data: d.data.filter(p => filteredTicketIds.has(p.id)) }))
-                .filter(d => d.data.length > 0);
+                .map(d => {
+                    const isExcluded = excludedMembers.some(ex =>
+                        d.fullName.toLowerCase().includes(ex) ||
+                        d.label.toLowerCase().includes(ex)
+                    );
+                    const filteredData = d.data.filter(p => filteredTicketIds.has(p.id));
 
-            const filteredCycleTimes = filteredTickets.filter(t => t.isCompleted && t.cycleTime !== null).map(t => t.cycleTime).sort((a, b) => a - b);
+                    if (isExcluded) {
+                        return {
+                            ...d,
+                            label: '⊘ ' + d.label + ' (excluded)',
+                            data: [],
+                            borderColor: 'rgba(200, 200, 200, 0.4)',
+                            backgroundColor: 'rgba(200, 200, 200, 0.2)',
+                            pointRadius: 0,
+                            borderDash: [4, 4]
+                        };
+                    }
+                    return { ...d, data: filteredData };
+                });
+
+            const filteredCycleTimes = ticketsAfterMemberFilter.filter(t => t.isCompleted && t.cycleTime !== null).map(t => t.cycleTime).sort((a, b) => a - b);
             const refMedian = filteredCycleTimes.length > 0 ? filteredCycleTimes[Math.floor(filteredCycleTimes.length / 2)] : 0;
             const refMean   = filteredCycleTimes.length > 0 ? filteredCycleTimes.reduce((a, b) => a + b, 0) / filteredCycleTimes.length : 0;
 
@@ -834,6 +898,7 @@ function generateScatterData(byOwner, allTickets) {
         if (data.length > 0) {
             datasets.push({
                 label: owner.name.split('@')[0],
+                fullName: owner.name,
                 data,
                 borderColor: colors[idx % colors.length],
                 backgroundColor: colors[idx % colors.length],
