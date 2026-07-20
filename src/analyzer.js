@@ -1,6 +1,22 @@
 const csv = require('csv-parse/sync');
 
 /**
+ * Normalize owner name to a canonical form (email prefix or name parts)
+ */
+function normalizeOwnerName(ownerStr) {
+    if (!ownerStr) return '';
+    ownerStr = ownerStr.trim();
+
+    // If it's an email, extract the part before @
+    if (ownerStr.includes('@')) {
+        return ownerStr.split('@')[0].toLowerCase().replace(/\./g, ' ');
+    }
+
+    // If it's a name, normalize to lowercase with consistent spacing
+    return ownerStr.toLowerCase().trim();
+}
+
+/**
  * Parse CSV content and extract records
  */
 function parseCSV(content) {
@@ -93,9 +109,29 @@ async function analyzeTickets(csvFiles) {
             
             for (const record of records) {
                 const sprintInfo = extractSprintInfo(csvFile.name, record);
-                const cycleTime = calculateCycleTime(record.started_at, record.completed_at);
-                const isCompleted = !!(record.completed_at && record.completed_at.trim() !== '');
-                
+
+                // Handle both old format (datetime columns) and new format (boolean columns)
+                let startedAt, completedAt, isCompleted;
+
+                if (record.started_at && record.completed_at) {
+                    // Old format: has explicit datetime columns
+                    startedAt = record.started_at;
+                    completedAt = record.completed_at;
+                    isCompleted = !!(completedAt && completedAt.trim() !== '');
+                } else if (record.started !== undefined || record.completed !== undefined) {
+                    // New format: has boolean columns, use created_at/updated_at as proxies
+                    startedAt = record.created_at;
+                    isCompleted = record.completed === 'True' || record.is_completed === 'True';
+                    completedAt = isCompleted ? record.updated_at : null;
+                } else {
+                    // Fallback
+                    startedAt = null;
+                    completedAt = null;
+                    isCompleted = false;
+                }
+
+                const cycleTime = calculateCycleTime(startedAt, completedAt);
+
                 const ticket = {
                     id: record.id,
                     name: record.name,
@@ -106,8 +142,8 @@ async function analyzeTickets(csvFiles) {
                     cycleTime,
                     isCompleted,
                     createdAt: record.created_at,
-                    startedAt: record.started_at,
-                    completedAt: record.completed_at
+                    startedAt,
+                    completedAt
                 };
                 
                 tickets.push(ticket);
@@ -150,19 +186,23 @@ async function analyzeTickets(csvFiles) {
                 if (isCompleted) epic.completed++;
                 epic.tickets.push(ticket);
                 
-                // Track owners
-                const owners = ticket.owner.split(';').map(o => o.trim());
-                for (const owner of owners) {
-                    if (owner && owner !== 'Unassigned') {
-                        if (!ownerMap.has(owner)) {
-                            ownerMap.set(owner, {
-                                name: owner,
+                // Track owners (split by both ; and , for compatibility with different formats)
+                const ownerStrs = ticket.owner.split(/[;,]/).map(o => o.trim()).filter(Boolean);
+                for (const ownerStr of ownerStrs) {
+                    if (ownerStr && ownerStr !== 'Unassigned') {
+                        // Use normalized name as key to deduplicate "claire@..." and "Claire Tran"
+                        const normalizedKey = normalizeOwnerName(ownerStr);
+
+                        if (!ownerMap.has(normalizedKey)) {
+                            ownerMap.set(normalizedKey, {
+                                name: ownerStr,
+                                displayName: ownerStr,
                                 tickets: 0,
                                 completed: 0,
                                 cycleTimes: []
                             });
                         }
-                        const ownerStats = ownerMap.get(owner);
+                        const ownerStats = ownerMap.get(normalizedKey);
                         ownerStats.tickets++;
                         if (isCompleted) ownerStats.completed++;
                         if (cycleTime !== null && isCompleted) {

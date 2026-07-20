@@ -879,6 +879,18 @@ function generateDashboardHTML(analysis) {
 }
 
 /**
+ * Normalize owner name for matching (email prefix or name parts)
+ */
+function normalizeOwnerName(ownerStr) {
+    if (!ownerStr) return '';
+    ownerStr = ownerStr.trim();
+    if (ownerStr.includes('@')) {
+        return ownerStr.split('@')[0].toLowerCase().replace(/\./g, ' ');
+    }
+    return ownerStr.toLowerCase().trim();
+}
+
+/**
  * Generate scatter plot data — one point per completed ticket per owner
  */
 function generateScatterData(byOwner, allTickets) {
@@ -891,13 +903,18 @@ function generateScatterData(byOwner, allTickets) {
     ];
 
     byOwner.slice(0, 10).forEach((owner, idx) => {
+        const ownerNormalized = normalizeOwnerName(owner.name);
         const data = allTickets
-            .filter(t => t.owner.includes(owner.name) && t.isCompleted && t.completedAt && t.cycleTime !== null)
+            .filter(t => {
+                if (!t.isCompleted || !t.completedAt || t.cycleTime === null) return false;
+                const ticketOwners = t.owner.split(/[;,]/).map(o => normalizeOwnerName(o.trim()));
+                return ticketOwners.includes(ownerNormalized);
+            })
             .map(t => ({ x: new Date(t.completedAt).getTime(), y: t.cycleTime, name: t.name, id: t.id }));
 
         if (data.length > 0) {
             datasets.push({
-                label: owner.name.split('@')[0],
+                label: owner.displayName || owner.name.split('@')[0],
                 fullName: owner.name,
                 data,
                 borderColor: colors[idx % colors.length],
